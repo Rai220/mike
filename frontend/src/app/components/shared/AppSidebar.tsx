@@ -19,7 +19,7 @@ import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
-import { MikeIcon } from "@/app/components/chat/mike-icon";
+import Image from "next/image";
 import { SidebarChatItem } from "@/app/components/shared/SidebarChatItem";
 import {
     ChatSkeuoIcon,
@@ -279,13 +279,19 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                 href="/assistant"
                                 className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
                             >
-                                <MikeIcon size={20} />
+                                <Image
+                                    src="/lispenard-mark.png"
+                                    alt=""
+                                    width={20}
+                                    height={20}
+                                    className="rounded-full"
+                                />
                                 <span
                                     className={`text-[22px] font-light font-serif ${
                                         shouldAnimate ? "sidebar-fade-in" : ""
                                     }`}
                                 >
-                                    Mike
+                                    Lispenard OS
                                 </span>
                             </Link>
                         </div>
