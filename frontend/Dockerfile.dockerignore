@@ -10,6 +10,8 @@
 backend/dist
 backend/supabase
 word-addin
+# …except the sources type-imported by src/wordAddin parity tests.
+!word-addin/src
 desktop
 docs
 **/.env
