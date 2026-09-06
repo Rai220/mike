@@ -19,6 +19,7 @@ Website: [mikeoss.com](https://mikeoss.com)
 - Run reusable assistant and tabular-review workflows
 - Organize projects, folders, and a document library
 - Verify citations and research US case law with CourtListener
+- Research US public-company SEC filings with EDGAR
 - Work from Microsoft Word with the beta task-pane add-in
 - Run supported language models locally through Ollama
 
@@ -75,6 +76,7 @@ authentication behavior, Ollama setup, and first-run guidance.
 - [Manual and production deployment](docs/deployment.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [CourtListener integration](docs/courtlistener.md)
+- [SEC EDGAR integration](docs/edgar.md)
 - [Microsoft Word add-in](word-addin/README.md)
 - [Tamper-evident exports](docs/tamper-evident-exports.md)
 - [Safe local testing](docs/safe-local-testing.md)

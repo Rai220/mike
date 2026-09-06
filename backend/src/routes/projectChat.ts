@@ -105,6 +105,9 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     const displayed_doc = parsedDisplayedDoc.value;
     const attached_documents = parsedAttachedDocuments.value;
     const askInputsResponse = parsedAskInputsResponse.value;
+    // Composer toggle: EDGAR research runs only when the client opts in.
+    // An absent field keeps it enabled so API callers are unaffected.
+    const useEdgar = body.use_edgar !== false;
 
     const db = createServerSupabase();
 
@@ -379,6 +382,8 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         undefined,
         legalResearchUs,
         nonce,
+        "append",
+        useEdgar,
     );
 
     const workflowStore = await buildWorkflowStore(userId, userEmail, db);
@@ -455,6 +460,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             allowDocumentMutation,
             workflowStore,
             includeResearchTools: legalResearchUs,
+            includeEdgarTools: useEdgar,
             model: selectedModel,
             reasoning: selectedReasoningLevel,
             apiKeys,

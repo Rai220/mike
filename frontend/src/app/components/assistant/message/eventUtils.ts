@@ -32,6 +32,12 @@ export function toolCallLabel(name: string): string {
     if (name === "courtlistener_read_case") return "Reading case...";
     if (name === "courtlistener_verify_citations")
         return "Verifying citations...";
+    if (name === "edgar_find_company") return "Looking up SEC company...";
+    if (name === "edgar_list_filings") return "Loading SEC filings...";
+    if (name === "edgar_search_filings") return "Searching SEC filings...";
+    if (name === "edgar_read_filing") return "Reading SEC filing...";
+    if (name === "edgar_find_in_filing") return "Searching SEC filing...";
+    if (name === "edgar_company_facts") return "Loading SEC financials...";
     if (name.startsWith("mcp_")) return "Using connector...";
     return name ? `Running ${name}...` : "Working...";
 }

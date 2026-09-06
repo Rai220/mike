@@ -21,6 +21,7 @@ const { streamChatWithTools, runToolCalls } = vi.hoisted(() => ({
     askInputsEvents: [],
     courtlistenerEvents: [],
     caseCitationEvents: [],
+    edgarEvents: [],
     mcpEvents: [],
   })),
 }));

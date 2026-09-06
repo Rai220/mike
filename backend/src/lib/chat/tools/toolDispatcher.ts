@@ -70,6 +70,18 @@ import {
   upsertCourtlistenerCases,
   type CourtlistenerTurnState,
 } from "./courtlistenerTurnState";
+import { EDGAR_TOOL_NAMES, type EdgarToolEvent } from "./edgarTools";
+import {
+  createEdgarTurnState,
+  getOrFetchEdgarFiling,
+  type EdgarTurnState,
+} from "./edgarTurnState";
+import {
+  findEdgarCompanies,
+  getEdgarCompanyFacts,
+  getEdgarFilings,
+  searchEdgarFilings,
+} from "../../edgar";
 
 function sourceMaterialNotice(
   sourceKind: "document" | "library_template" | "workflow_asset" | undefined,
@@ -270,6 +282,7 @@ export async function runToolCalls(
   courtlistenerState?: CourtlistenerTurnState,
   apiKeys?: import("../../llm").UserApiKeys,
   nonce?: string,
+  edgarState?: EdgarTurnState,
 ): Promise<{
   toolResults: unknown[];
   docsRead: {
@@ -293,6 +306,7 @@ export async function runToolCalls(
   askInputsEvents: AskInputsEvent[];
   courtlistenerEvents: CourtlistenerToolEvent[];
   caseCitationEvents: CaseCitationEvent[];
+  edgarEvents: EdgarToolEvent[];
   mcpEvents: McpToolEvent[];
 }> {
   const toolResults: unknown[] = [];
@@ -317,9 +331,27 @@ export async function runToolCalls(
   const askInputsEvents: AskInputsEvent[] = [];
   const courtlistenerEvents: CourtlistenerToolEvent[] = [];
   const caseCitationEvents: CaseCitationEvent[] = [];
+  const edgarEvents: EdgarToolEvent[] = [];
   const mcpEvents: McpToolEvent[] = [];
   const courtState: CourtlistenerTurnState = courtlistenerState ?? {
     casesByClusterId: new Map(),
+  };
+  const edgarTurn: EdgarTurnState = edgarState ?? createEdgarTurnState();
+  const pushEdgarError = (
+    tc: ToolCall,
+    event: EdgarToolEvent,
+    err: unknown,
+  ) => {
+    const message =
+      err instanceof Error ? err.message : "SEC EDGAR request failed.";
+    const failed = { ...event, error: message } as EdgarToolEvent;
+    write(`data: ${JSON.stringify(failed)}\n\n`);
+    edgarEvents.push(failed);
+    toolResults.push({
+      role: "tool",
+      tool_call_id: tc.id,
+      content: JSON.stringify({ ok: false, error: message }),
+    });
   };
   const groupedFindInCaseSearches = toolCalls
     .filter((tc) => tc.function.name === COURTLISTENER_TOOL_NAMES.findInCase)
@@ -1960,6 +1992,243 @@ export async function runToolCalls(
         previewFilename,
         "pptx",
       );
+    } else if (tc.function.name === EDGAR_TOOL_NAMES.findCompany) {
+      const query = typeof args.query === "string" ? args.query : "";
+      try {
+        const companies = await findEdgarCompanies(
+          query,
+          typeof args.limit === "number" ? Math.floor(args.limit) : undefined,
+        );
+        const event: EdgarToolEvent = {
+          type: "edgar_find_company",
+          query,
+          result_count: companies.length,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        edgarEvents.push(event);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({ companies }),
+        });
+      } catch (err) {
+        pushEdgarError(
+          tc,
+          { type: "edgar_find_company", query, result_count: 0 },
+          err,
+        );
+      }
+    } else if (tc.function.name === EDGAR_TOOL_NAMES.listFilings) {
+      const cik = typeof args.cik === "string" ? args.cik : String(args.cik ?? "");
+      try {
+        const result = await getEdgarFilings({
+          cik,
+          forms: Array.isArray(args.forms)
+            ? args.forms.filter((f): f is string => typeof f === "string")
+            : undefined,
+          filedAfter:
+            typeof args.filedAfter === "string" ? args.filedAfter : undefined,
+          filedBefore:
+            typeof args.filedBefore === "string" ? args.filedBefore : undefined,
+          limit: typeof args.limit === "number" ? args.limit : undefined,
+        });
+        const event: EdgarToolEvent = {
+          type: "edgar_list_filings",
+          cik: result.cik,
+          company: result.name,
+          filing_count: result.filings.length,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        edgarEvents.push(event);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify(result),
+        });
+      } catch (err) {
+        pushEdgarError(
+          tc,
+          { type: "edgar_list_filings", cik: cik || null, filing_count: 0 },
+          err,
+        );
+      }
+    } else if (tc.function.name === EDGAR_TOOL_NAMES.searchFilings) {
+      const query = typeof args.query === "string" ? args.query : "";
+      try {
+        const result = await searchEdgarFilings({
+          query,
+          forms: Array.isArray(args.forms)
+            ? args.forms.filter((f): f is string => typeof f === "string")
+            : undefined,
+          cik: typeof args.cik === "string" ? args.cik : undefined,
+          filedAfter:
+            typeof args.filedAfter === "string" ? args.filedAfter : undefined,
+          filedBefore:
+            typeof args.filedBefore === "string" ? args.filedBefore : undefined,
+          limit: typeof args.limit === "number" ? args.limit : undefined,
+        });
+        const event: EdgarToolEvent = {
+          type: "edgar_search_filings",
+          query,
+          result_count: result.hits.length,
+          total: result.total,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        edgarEvents.push(event);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify(result),
+        });
+      } catch (err) {
+        pushEdgarError(
+          tc,
+          { type: "edgar_search_filings", query, result_count: 0, total: 0 },
+          err,
+        );
+      }
+    } else if (tc.function.name === EDGAR_TOOL_NAMES.findInFiling) {
+      const accessionArg =
+        typeof args.accession_number === "string" ? args.accession_number : "";
+      const query = typeof args.query === "string" ? args.query : "";
+      try {
+        const filing = await getOrFetchEdgarFiling(edgarTurn, {
+          cik: typeof args.cik === "string" ? args.cik : String(args.cik ?? ""),
+          accessionNumber: accessionArg,
+          document: typeof args.document === "string" ? args.document : null,
+        });
+        const { hits, totalMatches } = findTextMatches({
+          text: filing.text,
+          query,
+          maxResults:
+            typeof args.max_results === "number"
+              ? Math.max(0, Math.floor(args.max_results))
+              : 20,
+          contextChars:
+            typeof args.context_chars === "number"
+              ? Math.max(0, Math.floor(args.context_chars))
+              : 160,
+        });
+        const event: EdgarToolEvent = {
+          type: "edgar_find_in_filing",
+          accession_number: filing.accession_number,
+          query,
+          total_matches: totalMatches,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        edgarEvents.push(event);
+        // Filing text is third-party content from the public internet;
+        // fence the excerpts like any other untrusted document body.
+        const matches = hits.map((hit) => ({
+          index: hit.index,
+          context: nonce ? spotlight(hit.context, nonce) : hit.context,
+        }));
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({
+            ok: true,
+            accession_number: filing.accession_number,
+            document: filing.document,
+            url: filing.url,
+            total_matches: totalMatches,
+            matches,
+          }),
+        });
+      } catch (err) {
+        pushEdgarError(
+          tc,
+          {
+            type: "edgar_find_in_filing",
+            accession_number: accessionArg || null,
+            query,
+            total_matches: 0,
+          },
+          err,
+        );
+      }
+    } else if (tc.function.name === EDGAR_TOOL_NAMES.readFiling) {
+      const accessionArg =
+        typeof args.accession_number === "string" ? args.accession_number : "";
+      try {
+        const filing = await getOrFetchEdgarFiling(edgarTurn, {
+          cik: typeof args.cik === "string" ? args.cik : String(args.cik ?? ""),
+          accessionNumber: accessionArg,
+          document: typeof args.document === "string" ? args.document : null,
+        });
+        const offset =
+          typeof args.offset === "number"
+            ? Math.max(0, Math.floor(args.offset))
+            : 0;
+        const maxChars =
+          typeof args.max_chars === "number"
+            ? Math.max(1, Math.min(Math.floor(args.max_chars), 60_000))
+            : 20_000;
+        const chunk = filing.text.slice(offset, offset + maxChars);
+        const event: EdgarToolEvent = {
+          type: "edgar_read_filing",
+          accession_number: filing.accession_number,
+          document: filing.document,
+          chars_returned: chunk.length,
+          total_chars: filing.text.length,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        edgarEvents.push(event);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({
+            ok: true,
+            accession_number: filing.accession_number,
+            document: filing.document,
+            url: filing.url,
+            offset,
+            chars_returned: chunk.length,
+            total_chars: filing.text.length,
+            truncated_source: filing.truncated,
+            text: nonce ? spotlight(chunk, nonce) : chunk,
+          }),
+        });
+      } catch (err) {
+        pushEdgarError(
+          tc,
+          {
+            type: "edgar_read_filing",
+            accession_number: accessionArg || null,
+            chars_returned: 0,
+            total_chars: 0,
+          },
+          err,
+        );
+      }
+    } else if (tc.function.name === EDGAR_TOOL_NAMES.companyFacts) {
+      const cik = typeof args.cik === "string" ? args.cik : String(args.cik ?? "");
+      try {
+        const result = await getEdgarCompanyFacts({
+          cik,
+          concepts: Array.isArray(args.concepts)
+            ? args.concepts.filter((c): c is string => typeof c === "string")
+            : undefined,
+        });
+        const event: EdgarToolEvent = {
+          type: "edgar_company_facts",
+          cik: result.cik,
+          concept_count: result.facts.length,
+        };
+        write(`data: ${JSON.stringify(event)}\n\n`);
+        edgarEvents.push(event);
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify(result),
+        });
+      } catch (err) {
+        pushEdgarError(
+          tc,
+          { type: "edgar_company_facts", cik: cik || null, concept_count: 0 },
+          err,
+        );
+      }
     }
   }
 
@@ -1993,6 +2262,7 @@ export async function runToolCalls(
     askInputsEvents,
     courtlistenerEvents,
     caseCitationEvents,
+    edgarEvents,
     mcpEvents,
   };
 }

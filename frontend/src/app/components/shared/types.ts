@@ -358,6 +358,8 @@ export interface Message {
   workflow?: { id: string; title: string };
   model?: string;
   reasoning?: "none" | "low" | "medium" | "high" | "xhigh" | "max";
+  /** Composer toggle: whether the SEC EDGAR research tools are offered. */
+  useEdgar?: boolean;
   citations?: Citation[];
   citationStatus?: "started" | "partial" | "final";
   events?: AssistantEvent[];

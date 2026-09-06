@@ -1867,6 +1867,7 @@ export function TRChatPanel({
                     canSend={canSend}
                     hideAddDocButton
                     hideWorkflowButton
+                    hideEdgarToggle
                     chatModel={currentChatModel}
                     chatReasoningLevel={currentChatReasoningLevel}
                     chatKey={

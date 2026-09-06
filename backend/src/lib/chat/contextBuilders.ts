@@ -308,12 +308,13 @@ export function buildMessages(
   includeResearchTools = true,
   nonce?: string,
   systemPromptMode: "append" | "replace" = "append",
+  includeEdgarTools = true,
 ) {
   const formatted: unknown[] = [];
   let systemContent =
     systemPromptMode === "replace"
       ? (systemPromptExtra?.trim() ?? "")
-      : buildSystemPrompt(includeResearchTools);
+      : buildSystemPrompt(includeResearchTools, includeEdgarTools);
 
   if (systemPromptMode === "append" && systemPromptExtra) {
     systemContent += `\n\n${systemPromptExtra.trim()}`;

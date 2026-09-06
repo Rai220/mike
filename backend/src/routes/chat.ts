@@ -717,6 +717,9 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     const project_id = parsedProjectId.value.projectId;
     const model = parsedModel.value;
     const askInputsResponse = parsedAskInputsResponse.value;
+    // Composer toggle: EDGAR research runs only when the client opts in.
+    // An absent field keeps it enabled so API callers are unaffected.
+    const useEdgar = body.use_edgar !== false;
     // Reserve a stable assistant identity before streaming. This lets clients
     // associate streamed UI with the same durable message after a reload.
     const assistantMessageId = askInputsResponse ? null : randomUUID();
@@ -925,6 +928,8 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         undefined,
         legalResearchUs,
         nonce,
+        "append",
+        useEdgar,
     );
 
     const workflowStore = await buildWorkflowStore(userId, userEmail, db);
@@ -1029,6 +1034,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             allowDocumentMutation,
             workflowStore,
             includeResearchTools: legalResearchUs,
+            includeEdgarTools: useEdgar,
             model: selectedModel,
             reasoning: selectedReasoningLevel,
             apiKeys,

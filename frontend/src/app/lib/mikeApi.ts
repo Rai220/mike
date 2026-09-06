@@ -2030,6 +2030,7 @@ export async function streamChat(payload: {
     project_id?: string;
     model?: string;
     reasoning?: Message["reasoning"];
+    use_edgar?: boolean;
     ask_inputs_response?: AskInputsResponsePayload;
     signal?: AbortSignal;
 }): Promise<Response> {
@@ -2058,6 +2059,7 @@ export async function streamProjectChat(payload: {
     chat_id?: string;
     model?: string;
     reasoning?: Message["reasoning"];
+    use_edgar?: boolean;
     displayed_doc?: { filename: string; document_id: string };
     attached_documents?: { filename: string; document_id: string }[];
     ask_inputs_response?: AskInputsResponsePayload;

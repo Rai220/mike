@@ -14,6 +14,11 @@ import {
   type CaseCitationEvent,
   type CourtlistenerToolEvent,
 } from "./tools/courtlistenerTools";
+import { EDGAR_TOOLS, type EdgarToolEvent } from "./tools/edgarTools";
+import {
+  createEdgarTurnState,
+  type EdgarTurnState,
+} from "./tools/edgarTurnState";
 import {
   type DocStore,
   type DocIndex,
@@ -106,6 +111,7 @@ export type AssistantEvent =
     }
   | CaseCitationEvent
   | CourtlistenerToolEvent
+  | EdgarToolEvent
   | McpToolEvent
   | {
       type: "case_opinions";
@@ -226,6 +232,8 @@ export async function runLLMStream(params: {
   write: (s: string) => void;
   extraTools?: unknown[];
   includeResearchTools?: boolean;
+  /** Gate for the SEC EDGAR tools within the research tool set. */
+  includeEdgarTools?: boolean;
   /** Expose ask_inputs only to clients that can render and answer it. */
   includeAskInputs?: boolean;
   /**
@@ -282,6 +290,7 @@ export async function runLLMStream(params: {
     write: unsafeWrite,
     extraTools,
     includeResearchTools = true,
+    includeEdgarTools = true,
     includeAskInputs = true,
     allowDocumentMutation = true,
     workflowStore,
@@ -296,7 +305,13 @@ export async function runLLMStream(params: {
   } = params;
   const write = (chunk: string) =>
     unsafeWrite(sanitizeAssistantSseChunk(chunk));
-  const researchTools = includeResearchTools ? COURTLISTENER_TOOLS : [];
+  const researchTools = includeResearchTools
+    ? [
+        ...COURTLISTENER_TOOLS,
+        ...(includeEdgarTools ? EDGAR_TOOLS : []),
+      ]
+    : [];
+  const edgarEnabled = includeResearchTools && includeEdgarTools;
   const mcpTools = await buildUserMcpTools(userId, db);
   const conversationTools = includeAskInputs
     ? TOOLS
@@ -342,6 +357,7 @@ export async function runLLMStream(params: {
   const courtlistenerTurnState: CourtlistenerTurnState = {
     casesByClusterId: new Map(),
   };
+  const edgarTurnState: EdgarTurnState = createEdgarTurnState();
   let fullText = "";
   let iterText = "";
   let iterVisibleText = "";
@@ -544,9 +560,17 @@ export async function runLLMStream(params: {
         // "Tool 'x' is not available." answer below, which every tool_use
         // without a result already gets, so the model is told plainly rather
         // than left waiting on a call that silently did nothing.
-        const permittedCalls = allowDocumentMutation
+        const mutationPermittedCalls = allowDocumentMutation
           ? calls
           : calls.filter((c) => !isDocumentMutatingTool(c.name));
+        // Same enforcement for EDGAR: when the caller disabled it, a call
+        // the model makes from memory is dropped before dispatch and falls
+        // through to the "Tool 'x' is not available." answer below.
+        const permittedCalls = edgarEnabled
+          ? mutationPermittedCalls
+          : mutationPermittedCalls.filter(
+              (c) => !c.name.startsWith("edgar_"),
+            );
         const serverCalls = clientTools
           ? permittedCalls.filter((c) => !clientTools.owns(c.name))
           : permittedCalls;
@@ -579,6 +603,7 @@ export async function runLLMStream(params: {
           askInputsEvents,
           courtlistenerEvents,
           caseCitationEvents,
+          edgarEvents,
           mcpEvents,
         } = await runToolCalls(
           toolCalls,
@@ -595,6 +620,7 @@ export async function runLLMStream(params: {
           courtlistenerTurnState,
           apiKeys,
           nonce,
+          edgarTurnState,
         );
         throwIfAborted(signal);
         for (const r of docsRead) {
@@ -658,6 +684,9 @@ export async function runLLMStream(params: {
           events.push(askInputsEvent);
         }
         for (const event of courtlistenerEvents) {
+          events.push(event);
+        }
+        for (const event of edgarEvents) {
           events.push(event);
         }
         for (const event of mcpEvents) {

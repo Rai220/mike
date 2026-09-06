@@ -11,6 +11,7 @@ import {
 import {
     ArrowRight,
     Check,
+    Landmark,
     Library,
     Loader2,
     Square,
@@ -93,6 +94,7 @@ interface Props {
     canSend?: boolean;
     hideAddDocButton?: boolean;
     hideWorkflowButton?: boolean;
+    hideEdgarToggle?: boolean;
     projectName?: string;
     projectCmNumber?: string | null;
     projectId?: string;
@@ -103,6 +105,8 @@ interface Props {
     chatKey?: string | null;
 }
 
+const EDGAR_TOGGLE_STORAGE_KEY = "edgarResearchEnabled";
+
 export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     {
         onSubmit,
@@ -111,6 +115,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         canSend = true,
         hideAddDocButton,
         hideWorkflowButton,
+        hideEdgarToggle,
         projectName,
         projectCmNumber,
         projectId,
@@ -158,6 +163,30 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     // every key gate (submit check + model toggle) fail open instead of
     // treating "we couldn't ask" as "no keys configured".
     const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
+
+    // Composer opt-in for the SEC EDGAR research tools. Off by default and
+    // remembered per browser; read in an effect so SSR markup stays stable.
+    const [edgarEnabled, setEdgarEnabled] = useState(false);
+    useEffect(() => {
+        try {
+            setEdgarEnabled(
+                localStorage.getItem(EDGAR_TOGGLE_STORAGE_KEY) === "true",
+            );
+        } catch {
+            /* localStorage unavailable — keep the default (off) */
+        }
+    }, []);
+    const toggleEdgar = () => {
+        setEdgarEnabled((prev) => {
+            const next = !prev;
+            try {
+                localStorage.setItem(EDGAR_TOGGLE_STORAGE_KEY, String(next));
+            } catch {
+                /* ignore — the toggle still applies for this session */
+            }
+            return next;
+        });
+    };
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const controlsRef = useRef<HTMLDivElement>(null);
     const [compactControls, setCompactControls] = useState(false);
@@ -487,6 +516,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             workflow: workflow ?? undefined,
             model,
             reasoning: reasoningLevel,
+            useEdgar: edgarEnabled,
         });
     };
 
@@ -736,6 +766,40 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                         }
                                     >
                                         Workflows
+                                    </span>
+                                </button>
+                            )}
+                            {!hideEdgarToggle && canSend && (
+                                <button
+                                    type="button"
+                                    onClick={toggleEdgar}
+                                    aria-pressed={edgarEnabled}
+                                    aria-label="Use SEC EDGAR research"
+                                    title={
+                                        edgarEnabled
+                                            ? "SEC EDGAR research is on"
+                                            : "Allow the assistant to research SEC filings"
+                                    }
+                                    className={cn(
+                                        "flex items-center gap-1.5 rounded-lg px-2 h-8 text-sm transition-colors",
+                                        edgarEnabled
+                                            ? "text-blue-600 hover:text-blue-700"
+                                            : "text-gray-400 hover:text-gray-700",
+                                    )}
+                                >
+                                    {edgarEnabled ? (
+                                        <Check className="h-3.5 w-3.5" />
+                                    ) : (
+                                        <Landmark className="h-3.5 w-3.5" />
+                                    )}
+                                    <span
+                                        className={
+                                            compactControls
+                                                ? "hidden"
+                                                : "hidden sm:inline"
+                                        }
+                                    >
+                                        EDGAR
                                     </span>
                                 </button>
                             )}

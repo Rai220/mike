@@ -351,6 +351,7 @@ export function useAssistantChat({
         document_id: f.document_id as string,
       }));
 
+      const useEdgar = message.useEdgar;
       const response = await (projectId
         ? streamProjectChat({
             projectId,
@@ -358,6 +359,7 @@ export function useAssistantChat({
             chat_id: chatId,
             model,
             reasoning,
+            use_edgar: useEdgar,
             displayed_doc: displayedDoc
               ? {
                   filename: displayedDoc.filename,
@@ -374,6 +376,7 @@ export function useAssistantChat({
             chat_id: chatId,
             model,
             reasoning,
+            use_edgar: useEdgar,
             ask_inputs_response: opts?.askInputsResponse,
             signal: controller.signal,
           }));
