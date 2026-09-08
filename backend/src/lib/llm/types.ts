@@ -65,6 +65,10 @@ export type UserApiKeys = {
 };
 
 export type StreamChatParams = {
+    /** Protected content: no raw recording, telemetry, unapproved tools or retries. */
+    sensitive?: boolean;
+    /** Internal capability for legacy Graph-only or the main assistant's bounded read tools. */
+    sensitiveTools?: "microsoft365" | "microsoft365-assistant";
     model: string;
     systemPrompt: string;
     messages: LlmMessage[];

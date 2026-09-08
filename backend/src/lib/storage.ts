@@ -237,18 +237,44 @@ export async function copyFile(
 // Download
 // ---------------------------------------------------------------------------
 
-export async function downloadFile(key: string): Promise<ArrayBuffer | null> {
+export async function downloadFile(
+  key: string,
+  options: { sensitive?: boolean; maxBytes?: number; signal?: AbortSignal } = {},
+): Promise<ArrayBuffer | null> {
   if (!storageEnabled) return null;
   try {
     const client = getClient();
     const response = (await client.send(
       new GetObjectCommand({ Bucket: BUCKET, Key: key }),
+      ...(options.signal ? [{ abortSignal: options.signal }] : []),
     )) as any;
     if (!response.Body) return null;
+    if (options.maxBytes !== undefined) {
+      const limit = options.maxBytes;
+      if (!Number.isSafeInteger(limit) || limit <= 0 || response.ContentLength > limit) {
+        response.Body.destroy?.();
+        return null;
+      }
+      const chunks: Buffer[] = [];
+      let size = 0;
+      try {
+        for await (const chunk of response.Body) {
+          options.signal?.throwIfAborted();
+          const bytes = Buffer.from(chunk);
+          size += bytes.length;
+          if (size > limit) return null;
+          chunks.push(bytes);
+        }
+        const bytes = Buffer.concat(chunks);
+        return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      } finally {
+        response.Body.destroy?.();
+      }
+    }
     const bytes = await response.Body.transformToByteArray();
     return bytes.buffer as ArrayBuffer;
   } catch (error) {
-    console.error("[storage] downloadFile failed", {
+    if (!options.sensitive) console.error("[storage] downloadFile failed", {
       key,
       error: error,
     });

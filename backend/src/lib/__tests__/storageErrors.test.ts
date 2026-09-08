@@ -61,6 +61,35 @@ beforeEach(() => {
 });
 
 describe("storage error logging", () => {
+  it("suppresses private download errors and storage keys", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.send.mockRejectedValue(new Error("PRIVATE ERROR"));
+    expect(await downloadFile("PRIVATE KEY", { sensitive: true, maxBytes: 10 })).toBeNull();
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+  it("bounds private downloads even without a content-length header", async () => {
+    const body = Readable.from([Buffer.from("12345"), Buffer.from("67890")]);
+    mocks.send.mockResolvedValue({ Body: body });
+    expect(await downloadFile("key", { sensitive: true, maxBytes: 8 })).toBeNull();
+    expect(body.destroyed).toBe(true);
+  });
+  it("returns exactly the bytes read and passes cancellation to storage", async () => {
+    const body = Readable.from([Buffer.from("prefixTEXTsuffix").subarray(6, 10)]);
+    const signal = new AbortController().signal;
+    mocks.send.mockResolvedValue({ Body: body, ContentLength: 4 });
+    const result = await downloadFile("key", { sensitive: true, maxBytes: 8, signal });
+    expect(Buffer.from(result!).toString()).toBe("TEXT");
+    expect(mocks.send.mock.calls[0][1]).toEqual({ abortSignal: signal });
+  });
+  it("rejects a declared oversized download before consuming it", async () => {
+    const body = Readable.from([Buffer.from("12345")]);
+    const read = vi.spyOn(body, Symbol.asyncIterator);
+    mocks.send.mockResolvedValue({ Body: body, ContentLength: 5 });
+    expect(await downloadFile("key", { sensitive: true, maxBytes: 4 })).toBeNull();
+    expect(read).not.toHaveBeenCalled();
+    expect(body.destroyed).toBe(true);
+  });
   it("uses the internal endpoint when the public upload endpoint is blank", async () => {
     mocks.getSignedUrl.mockResolvedValue("https://signed.example.test");
 

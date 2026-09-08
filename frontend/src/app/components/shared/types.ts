@@ -142,6 +142,8 @@ export interface StructureNode {
 }
 
 export interface Chat {
+  microsoft365_protected?: boolean;
+  microsoft365_expires_at?: string | null;
   id: string;
   project_id: string | null;
   user_id: string;
@@ -360,6 +362,7 @@ export interface Message {
   reasoning?: "none" | "low" | "medium" | "high" | "xhigh" | "max";
   /** Composer toggle: whether the SEC EDGAR research tools are offered. */
   useEdgar?: boolean;
+  useMicrosoft365?: boolean;
   citations?: Citation[];
   citationStatus?: "started" | "partial" | "final";
   events?: AssistantEvent[];

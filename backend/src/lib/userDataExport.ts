@@ -75,9 +75,12 @@ async function loadUserChats(db: Db, userId: string) {
     const chats = await selectAll(db, "chats", (query) =>
         query.eq("user_id", userId).order("created_at", { ascending: true }),
     );
-    const chatIds = idsFrom(chats);
+    // Corporate turns remain in encrypted backend-only storage. Exclude their
+    // shells and pre-promotion transcript too: exports never hydrate derivatives.
+    const exportable = chats.filter((chat) => chat.microsoft365_protected !== true);
+    const chatIds = idsFrom(exportable);
     const messages = await selectByIds(db, "chat_messages", "chat_id", chatIds);
-    return { chats, messages };
+    return { chats: exportable, messages };
 }
 
 async function loadUserWordChats(db: Db, userId: string) {

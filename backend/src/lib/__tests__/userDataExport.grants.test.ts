@@ -95,3 +95,23 @@ describe("account export: shared projects", () => {
         expect(reads.filter((r) => r.startsWith("projects."))).toEqual([]);
     });
 });
+
+
+it("excludes protected chat shells, plaintext pre-promotion rows and encrypted sidecars from account export", async () => {
+    const { db } = makeDb({
+        chats: [
+            { id: "ordinary", user_id: "u1", title: "Normal" },
+            { id: "corporate", user_id: "u1", title: "Microsoft 365", microsoft365_protected: true },
+        ],
+        chat_messages: [
+            { id: "m1", chat_id: "ordinary", content: "Normal answer" },
+            { id: "m2", chat_id: "corporate", content: "Pre-promotion history" },
+        ],
+        microsoft365_chats: [{ ordinary_chat_id: "corporate", payload_ciphertext: "PRIVATE-CIPHER" }],
+    });
+    const serialized = JSON.stringify(await buildUserAccountExport(db, "u1", "u1@example.com"));
+    expect(serialized).toContain("Normal answer");
+    expect(serialized).not.toContain("Pre-promotion history");
+    expect(serialized).not.toContain("PRIVATE-CIPHER");
+    expect(serialized).not.toContain('"id":"corporate"');
+});

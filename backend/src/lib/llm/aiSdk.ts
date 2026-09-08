@@ -11,6 +11,7 @@ import type {
   StreamChatResult,
 } from "./types";
 import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
+import { EDGAR_TOOL_NAMES } from "../chat/tools/edgarTools";
 
 const MAX_OUTPUT_TOKENS = 16_384;
 
@@ -138,6 +139,73 @@ export type AiSdkAdapterConfig = {
   courtlistenerCitationReminder?: boolean;
 };
 
+/** Fail closed even when a caller bypasses the provider entry point. */
+const SENSITIVE_GRAPH_TOOLS = new Set([
+  "microsoft365_search",
+  "microsoft365_recent_mail",
+  "microsoft365_read",
+]);
+const SENSITIVE_ASSISTANT_TOOLS = new Set([
+  ...SENSITIVE_GRAPH_TOOLS,
+  "read_document",
+  "find_in_document",
+  "list_documents",
+  "fetch_documents",
+  "list_workflows",
+  "read_workflow",
+  ...Object.values(EDGAR_TOOL_NAMES),
+]);
+
+function sensitiveToolNames(params: StreamChatParams): Set<string> | undefined {
+  if (params.sensitiveTools === "microsoft365") return SENSITIVE_GRAPH_TOOLS;
+  if (params.sensitiveTools === "microsoft365-assistant")
+    return SENSITIVE_ASSISTANT_TOOLS;
+  return undefined;
+}
+
+function isAllowedSensitiveTool(
+  tool: OpenAIToolSchema,
+  allowed: Set<string>,
+): boolean {
+  return (
+    !!tool &&
+    tool.type === "function" &&
+    !!tool.function &&
+    typeof tool.function.name === "string" &&
+    allowed.has(tool.function.name) &&
+    typeof tool.function.description === "string" &&
+    !!tool.function.parameters &&
+    typeof tool.function.parameters === "object" &&
+    !Array.isArray(tool.function.parameters) &&
+    tool.function.parameters.type === "object"
+  );
+}
+
+export function assertSensitiveChatParams(params: StreamChatParams): void {
+  const allowed = sensitiveToolNames(params);
+  const trustedTools =
+    allowed !== undefined &&
+    params.sensitive === true &&
+    params.callbacks === undefined &&
+    typeof params.runTools === "function" &&
+    Array.isArray(params.tools) &&
+    params.tools.length > 0 &&
+    params.tools.length <= allowed.size &&
+    params.tools.every((tool) => isAllowedSensitiveTool(tool, allowed)) &&
+    new Set(params.tools.map((tool) => tool.function.name)).size ===
+      params.tools.length;
+  if (
+    (params.sensitiveTools !== undefined && !trustedTools) ||
+    (params.sensitive &&
+      ((params.apiKeys !== undefined &&
+        !(trustedTools && params.sensitiveTools === "microsoft365-assistant")) ||
+        (!trustedTools &&
+          (params.tools !== undefined || params.runTools !== undefined))))
+  ) {
+    throw new Error("Protected chat does not allow user API keys or tools.");
+  }
+}
+
 type PendingToolExecution = {
   call: NormalizedToolCall;
   resolve: (content: string) => void;
@@ -259,19 +327,52 @@ export async function streamAiSdk(
   params: StreamChatParams,
   config: AiSdkAdapterConfig,
 ): Promise<StreamChatResult> {
+  assertSensitiveChatParams(params);
   const sdk = await import("ai");
   const tools = toAiSdkTools(params.tools ?? [], params.runTools, sdk);
-  const rawStreamRecorder = createRawLlmStreamRecorder({
-    provider: config.provider,
-    model: config.modelId,
-  });
+  const rawStreamRecorder = params.sensitive
+    ? null
+    : createRawLlmStreamRecorder({
+        provider: config.provider,
+        model: config.modelId,
+      });
   let fullText = "";
   let iteration = 0;
   const openReasoningBlocks = new Set<string>();
 
   try {
+    // SDK warning strings can contain provider-supplied content. Remove them
+    // per request instead of changing the process-global warning logger.
+    if (params.sensitive && typeof config.model === "string") {
+      throw new Error("Protected chat requires an explicit provider adapter.");
+    }
+    const model = params.sensitive
+      ? sdk.wrapLanguageModel({
+          model: config.model as Exclude<LanguageModel, string>,
+          middleware: {
+            specificationVersion: "v4",
+            wrapStream: async ({ doStream }) => {
+              const result = await doStream();
+              return {
+                ...result,
+                stream: result.stream.pipeThrough(
+                  new TransformStream({
+                    transform(part, controller) {
+                      controller.enqueue(
+                        part.type === "stream-start"
+                          ? { ...part, warnings: [] }
+                          : part,
+                      );
+                    },
+                  }),
+                ),
+              };
+            },
+          },
+        })
+      : config.model;
     const result = sdk.streamText({
-      model: config.model,
+      model,
       system: params.systemPrompt,
       messages: params.messages,
       tools,
@@ -288,7 +389,19 @@ export async function streamAiSdk(
               | "provider-default"
               | Exclude<NonNullable<StreamChatParams["reasoning"]>, "max">
               | undefined),
-      include: { rawChunks: true },
+      include: { rawChunks: !params.sensitive },
+      ...(params.sensitive
+        ? {
+            maxRetries: 0,
+            telemetry: {
+              isEnabled: false,
+              recordInputs: false,
+              recordOutputs: false,
+            },
+            // SDK's default callback prints raw provider errors, including bodies.
+            onError: () => {},
+          }
+        : {}),
       ...(config.courtlistenerCitationReminder
         ? {
             prepareStep: ({
@@ -309,8 +422,11 @@ export async function streamAiSdk(
       switch (part.type) {
         case "start-step":
           iteration += 1;
+          // Corporate turns are buffered: only the final step is a user-facing answer.
+          if (sensitiveToolNames(params)) fullText = "";
           break;
         case "raw":
+          if (params.sensitive) break;
           logRawLlmStream({
             provider: config.provider,
             model: config.modelId,
@@ -341,6 +457,14 @@ export async function streamAiSdk(
           }
           break;
         case "tool-call": {
+          if (
+            params.sensitive &&
+            !(
+              sensitiveToolNames(params)?.has(part.toolName) &&
+              params.tools?.some((tool) => tool.function.name === part.toolName)
+            )
+          )
+            throw new Error("Protected chat received a tool call.");
           const call: NormalizedToolCall = {
             id: part.toolCallId,
             name: part.toolName,
@@ -369,6 +493,12 @@ export async function streamAiSdk(
     return { fullText };
   } catch (error) {
     await rawStreamRecorder?.flush("error", error);
+    if (params.sensitive) {
+      const safeError = new Error("Protected model request failed.");
+      if (error instanceof Error && error.name === "AbortError")
+        safeError.name = "AbortError";
+      throw safeError;
+    }
     throw error;
   }
 }

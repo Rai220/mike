@@ -66,6 +66,10 @@ type AskInputsResponsePayload = {
 
 // Server-side shape before mapping
 interface ServerMessage {
+    useMicrosoft365?: boolean;
+    useEdgar?: boolean;
+    model?: string;
+    reasoning?: Message["reasoning"];
     id: string;
     chat_id: string;
     role: "user" | "assistant";
@@ -762,6 +766,57 @@ export async function saveApiKey(
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ api_key: apiKey }),
+    });
+}
+
+export type Microsoft365ConnectionStatus =
+    | "pending"
+    | "connected"
+    | "reconnect_required";
+
+export interface Microsoft365Connection {
+    id: string;
+    status: Microsoft365ConnectionStatus;
+    accountLabel: string | null;
+    connectedAt: string | null;
+    lastCheckedAt: string | null;
+}
+
+export interface Microsoft365ConnectionState {
+    available: boolean;
+    connection: Microsoft365Connection | null;
+}
+
+export async function getMicrosoft365Connection(): Promise<Microsoft365ConnectionState> {
+    return apiRequest<Microsoft365ConnectionState>("/integrations/microsoft365");
+}
+
+export async function connectMicrosoft365(): Promise<{
+    authorizationUrl: string;
+    callbackOrigin: string;
+}> {
+    return apiRequest("/integrations/microsoft365/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+    });
+}
+
+export async function checkMicrosoft365MailAccess(connectionId: string): Promise<{
+    ok: true;
+    mailAccess: true;
+    checkedAt: string;
+}> {
+    return apiRequest(`/integrations/microsoft365/${encodeURIComponent(connectionId)}/check`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+    });
+}
+
+export async function disconnectMicrosoft365(connectionId: string): Promise<void> {
+    return apiRequest(`/integrations/microsoft365/${encodeURIComponent(connectionId)}`, {
+        method: "DELETE",
     });
 }
 
@@ -1872,6 +1927,10 @@ export async function getChat(chatId: string): Promise<ChatDetailOut> {
                 content: typeof m.content === "string" ? m.content : "",
                 files: m.files ?? undefined,
                 workflow: m.workflow ?? undefined,
+                ...(m.useMicrosoft365 !== undefined ? { useMicrosoft365: m.useMicrosoft365 } : {}),
+                ...(m.useEdgar !== undefined ? { useEdgar: m.useEdgar } : {}),
+                ...(m.model !== undefined ? { model: m.model } : {}),
+                ...(m.reasoning !== undefined ? { reasoning: m.reasoning } : {}),
             };
         }
         const events = Array.isArray(m.content)
@@ -2031,6 +2090,7 @@ export async function streamChat(payload: {
     model?: string;
     reasoning?: Message["reasoning"];
     use_edgar?: boolean;
+    use_microsoft365?: boolean;
     ask_inputs_response?: AskInputsResponsePayload;
     signal?: AbortSignal;
 }): Promise<Response> {
@@ -2836,4 +2896,74 @@ export async function deleteWorkflowAsset(
     await apiRequest(`/workflows/${workflowId}/assets/${assetId}`, {
         method: "DELETE",
     });
+}
+
+
+export interface Microsoft365ChatSource {
+    ref: string;
+    title: string;
+    kind: "mail" | "file";
+    version: string;
+    fetchedAt: string;
+}
+
+export interface Microsoft365Chat {
+    chatId: string;
+    messages: { role: "user" | "assistant"; content: string; sourceRefs: string[] }[];
+    sources: Microsoft365ChatSource[];
+    expiresAt: string;
+}
+
+export interface Microsoft365ChatList {
+    available: boolean;
+    chats: { id: string; createdAt: string; expiresAt: string }[];
+    policy: { model: string; retentionDays: number } | null;
+}
+
+export type Microsoft365SearchItem = Pick<Microsoft365ChatSource, "ref" | "title" | "kind">;
+export type Microsoft365SourceView = Omit<Microsoft365ChatSource, "kind"> & { text: string; webUrl?: string };
+
+const microsoft365ChatsPath = "/integrations/microsoft365/chats";
+
+export function listMicrosoft365Chats(signal?: AbortSignal): Promise<Microsoft365ChatList> {
+    return apiRequest(microsoft365ChatsPath, { signal });
+}
+
+export function createMicrosoft365Chat(connectionId: string, signal?: AbortSignal): Promise<{ chatId: string }> {
+    return apiRequest(microsoft365ChatsPath, {
+        method: "POST", signal, headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ connectionId }),
+    });
+}
+
+export function getMicrosoft365Chat(chatId: string, signal?: AbortSignal): Promise<Microsoft365Chat> {
+    return apiRequest(`${microsoft365ChatsPath}/${encodeURIComponent(chatId)}`, { signal });
+}
+
+export function searchMicrosoft365ChatSources(
+    chatId: string,
+    input: { kind: "mail" | "file"; mode?: "search" | "recent"; query: string; offset?: number; selectedSourceRefs?: string[] },
+    signal?: AbortSignal,
+): Promise<{ items: Microsoft365SearchItem[]; more: boolean; nextOffset: number }> {
+    return apiRequest(`${microsoft365ChatsPath}/${encodeURIComponent(chatId)}/search`, {
+        method: "POST", signal, headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+    });
+}
+
+export function sendMicrosoft365ChatMessage(
+    chatId: string, input: { message: string; sourceRefs: string[] }, signal?: AbortSignal,
+): Promise<Microsoft365Chat> {
+    return apiRequest(`${microsoft365ChatsPath}/${encodeURIComponent(chatId)}/messages`, {
+        method: "POST", signal, headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+    });
+}
+
+export function getMicrosoft365ChatSource(chatId: string, sourceRef: string, signal?: AbortSignal): Promise<Microsoft365SourceView> {
+    return apiRequest(`${microsoft365ChatsPath}/${encodeURIComponent(chatId)}/sources/${encodeURIComponent(sourceRef)}`, { signal });
+}
+
+export function deleteMicrosoft365Chat(chatId: string, signal?: AbortSignal): Promise<void> {
+    return apiRequest(`${microsoft365ChatsPath}/${encodeURIComponent(chatId)}`, { method: "DELETE", signal });
 }

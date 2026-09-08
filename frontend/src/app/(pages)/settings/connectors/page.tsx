@@ -20,6 +20,7 @@ import {
 } from "@/app/components/settings/SettingsTextInput";
 import { Modal } from "@/app/components/modals/Modal";
 import { NewMcpModal } from "@/app/components/settings/NewMcpModal";
+import { Microsoft365ConnectionSection } from "@/app/components/settings/Microsoft365ConnectionSection";
 import {
     MfaVerificationPopup,
     needsMfaVerification,
@@ -613,11 +614,12 @@ export default function ConnectorsPage() {
             )}
 
             <div className="space-y-3">
+                <Microsoft365ConnectionSection />
                 {!loading &&
                     (connectors.length === 0 ? (
                         <SettingsSection>
                             <p className="p-4 text-sm text-gray-500">
-                                No connectors yet.
+                                No custom connectors yet.
                             </p>
                         </SettingsSection>
                     ) : (

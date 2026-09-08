@@ -12,6 +12,7 @@
 //   document.precompute_text — extract a legacy Office file's text once, so
 //                      read_document stops paying for LibreOffice per call
 
+import { maintainMicrosoft365 } from "../microsoft365/maintenance";
 import {
     chatTurnAuditEvents,
     insertAuditEvent,
@@ -542,6 +543,7 @@ DB_JOB_FAILURE_HOOKS["extraction.extract"] = async (db, job) => {
 };
 
 export const DB_JOB_HANDLERS: DbJobHandlers = {
+    "microsoft365.maintenance": maintainMicrosoft365,
     "audit.chat_turn": handleChatTurnAudit,
     "account.delete": handleAccountDelete,
     "storage.cleanup": handleStorageCleanup,

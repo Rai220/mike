@@ -322,10 +322,13 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                         return (
                             <div key={href} className="py-0.5 px-2.5">
                                 <button
+                                    type="button"
+                                    aria-label={label}
+                                    aria-current={isActive ? "page" : undefined}
                                     onClick={() => router.push(href)}
                                     title={!isOpen ? label : ""}
                                     className={cn(
-                                        "w-full h-9 flex items-center gap-3 px-2.5 py-2 rounded-md transition-colors text-left",
+                                        "w-full h-9 flex items-center gap-3 px-2.5 py-2 rounded-md transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40",
                                         isActive
                                             ? `${LIQUID_GLASS_SELECTED_CLASS} text-gray-900`
                                             : `text-gray-700 ${LIQUID_GLASS_HOVER_CLASS}`,

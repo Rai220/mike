@@ -1,5 +1,6 @@
 import {
   aiSdkFetch,
+  assertSensitiveChatParams,
   completeAiSdkText,
   streamAiSdk,
   type AiSdkAdapterConfig,
@@ -284,6 +285,7 @@ async function createProviderAdapter(
 export async function streamWithProvider(
   params: StreamChatParams,
 ): Promise<StreamChatResult> {
+  assertSensitiveChatParams(params);
   const normalizedParams = {
     ...params,
     reasoning: normalizeReasoningLevelForModel(params.model, params.reasoning),
@@ -294,6 +296,7 @@ export async function streamWithProvider(
       await createProviderAdapter(params.model, params.apiKeys),
     );
   } catch (error) {
+    if (params.sensitive) throw error;
     const retryReasoning = fallbackReasoningLevelFromProviderError(
       error,
       normalizedParams.reasoning,

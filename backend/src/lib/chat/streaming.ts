@@ -54,6 +54,10 @@ import {
   type TurnReadState,
 } from "./tools/documentOps";
 import { verifyCitations } from "./verifyCitations";
+import {
+  getMicrosoft365ChatHandoff,
+  microsoft365ChatRoutingInstruction,
+} from "../microsoft365/handoff";
 
 export type AssistantEvent =
   | { type: "reasoning"; text: string }
@@ -305,6 +309,15 @@ export async function runLLMStream(params: {
   } = params;
   const write = (chunk: string) =>
     unsafeWrite(sanitizeAssistantSseChunk(chunk));
+  const microsoft365Handoff = await getMicrosoft365ChatHandoff(apiMessages, userId, db);
+  if (microsoft365Handoff) {
+    if (signal?.aborted) throw new AssistantStreamAbortError("", []);
+    const event: AssistantEvent = { type: "content", text: microsoft365Handoff };
+    write(`data: ${JSON.stringify(event)}\n\n`);
+    write(`data: ${JSON.stringify({ type: "citations", status: "final", citations: [] })}\n\n`);
+    if (params.emitDone !== false) write("data: [DONE]\n\n");
+    return { fullText: microsoft365Handoff, events: [event], citations: [] };
+  }
   const researchTools = includeResearchTools
     ? [
         ...COURTLISTENER_TOOLS,
@@ -335,7 +348,8 @@ export async function runLLMStream(params: {
   // plain user/assistant messages.
   const rawMsgs = apiMessages as { role: string; content: string | null }[];
   const systemPrompt =
-    rawMsgs[0]?.role === "system" ? (rawMsgs[0].content ?? "") : "";
+    (rawMsgs[0]?.role === "system" ? (rawMsgs[0].content ?? "") : "") +
+    microsoft365ChatRoutingInstruction();
   const chatMessages: LlmMessage[] = rawMsgs
     .filter((m) => m.role !== "system")
     .map((m) => ({

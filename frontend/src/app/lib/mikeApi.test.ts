@@ -3,6 +3,10 @@ import type { AssistantEvent, Chat } from "@/app/components/shared/types";
 
 import {
     MikeApiError,
+    getMicrosoft365Connection,
+    connectMicrosoft365,
+    checkMicrosoft365MailAccess,
+    disconnectMicrosoft365,
     addDocumentToProject,
     clearTabularCells,
     completeUserOnboarding,
@@ -596,6 +600,12 @@ describe("getChat message mapping", () => {
         title: "T",
         created_at: "2026-01-01",
     };
+
+    it.each([true, false])("restores protected composer preferences including access=%s", async (enabled) => {
+        const preferences = { useMicrosoft365: enabled, useEdgar: true, model: "claude-sonnet-4-6", reasoning: "low" };
+        fetchMock.mockResolvedValue(jsonResponse({ chat, messages: [{ id: "m1", role: "user", content: "Review", ...preferences }] }));
+        expect((await getChat("c1")).messages[0]).toMatchObject(preferences);
+    });
 
     it("maps user messages, keeping files and workflow", async () => {
         fetchMock.mockResolvedValue(
@@ -1945,6 +1955,32 @@ describe("thin endpoint wrappers", () => {
             url: "/user/api-keys/openai",
             method: "PUT",
             body: { api_key: null },
+        },
+        // Microsoft 365 connections
+        {
+            name: "getMicrosoft365Connection",
+            call: () => getMicrosoft365Connection(),
+            url: "/integrations/microsoft365",
+        },
+        {
+            name: "connectMicrosoft365",
+            call: () => connectMicrosoft365(),
+            url: "/integrations/microsoft365/connect",
+            method: "POST",
+            body: {},
+        },
+        {
+            name: "checkMicrosoft365MailAccess",
+            call: () => checkMicrosoft365MailAccess("connection/1"),
+            url: "/integrations/microsoft365/connection%2F1/check",
+            method: "POST",
+            body: {},
+        },
+        {
+            name: "disconnectMicrosoft365",
+            call: () => disconnectMicrosoft365("connection/1"),
+            url: "/integrations/microsoft365/connection%2F1",
+            method: "DELETE",
         },
         // MCP connectors
         {

@@ -18,7 +18,7 @@ export default function AssistantChatPage() {
         useChatHistoryContext();
 
     const initialMessages = newChatMessages ?? [];
-    const { messages, isResponseLoading, handleChat, setMessages, cancel } =
+    const { messages, isResponseLoading, handleChat, setMessages, cancel, microsoft365, microsoft365Suspended, setMicrosoft365 } =
         useAssistantChat({ initialMessages, chatId: id });
 
     const hasAutoSent = useRef(false);
@@ -60,6 +60,10 @@ export default function AssistantChatPage() {
         getChat(id)
             .then(({ chat, messages: loaded }) => {
                 setChat(chat);
+                if (chat.microsoft365_protected) {
+                    setMicrosoft365({ protected: true, expiresAt: chat.microsoft365_expires_at ?? null, model: chat.model ?? undefined, reasoning: chat.reasoning_level ?? undefined });
+                    if (document.hidden || (chat.microsoft365_expires_at && Date.parse(chat.microsoft365_expires_at) <= Date.now())) return;
+                }
                 setChatModel(chat.model ?? null);
                 setChatReasoningLevel(chat.reasoning_level ?? null);
                 setCanSend(can(roleFrom(chat), "content.edit"));
@@ -90,13 +94,15 @@ export default function AssistantChatPage() {
         <ChatView
             chatId={id}
             chat={chat}
-            chatModel={chatModel}
-            chatReasoningLevel={chatReasoningLevel}
+            microsoft365Protected={microsoft365?.protected}
+            microsoft365ExpiresAt={microsoft365?.expiresAt}
+            chatModel={microsoft365?.model ?? chatModel}
+            chatReasoningLevel={microsoft365?.reasoning ?? chatReasoningLevel}
             messages={messages}
             isResponseLoading={isResponseLoading}
             handleChat={handleChat}
             cancel={cancel}
-            canSend={canSend}
+            canSend={canSend && !microsoft365Suspended}
         />
     );
 }

@@ -12,6 +12,7 @@ import {
     ArrowRight,
     Check,
     Landmark,
+    Mail,
     Library,
     Loader2,
     Square,
@@ -95,6 +96,9 @@ interface Props {
     hideAddDocButton?: boolean;
     hideWorkflowButton?: boolean;
     hideEdgarToggle?: boolean;
+    hideMicrosoft365Toggle?: boolean;
+    microsoft365Protected?: boolean;
+    initialMicrosoft365Enabled?: boolean;
     projectName?: string;
     projectCmNumber?: string | null;
     projectId?: string;
@@ -116,6 +120,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         hideAddDocButton,
         hideWorkflowButton,
         hideEdgarToggle,
+        hideMicrosoft365Toggle,
+        microsoft365Protected = false,
+        initialMicrosoft365Enabled = false,
         projectName,
         projectCmNumber,
         projectId,
@@ -186,6 +193,30 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             }
             return next;
         });
+    };
+    // Private-source access is deliberately not remembered in browser storage.
+    const [microsoft365Enabled, setMicrosoft365Enabled] = useState(initialMicrosoft365Enabled);
+    const microsoft365SelectionRef = useRef({ chatKey, touched: false });
+    useEffect(() => {
+        if (microsoft365SelectionRef.current.chatKey !== chatKey) {
+            microsoft365SelectionRef.current = { chatKey, touched: false };
+        }
+        // Hydrate an asynchronously loaded chat once; subsequent message updates
+        // must not overwrite a switch the user has already changed.
+        if (!microsoft365SelectionRef.current.touched) {
+            setMicrosoft365Enabled(initialMicrosoft365Enabled);
+        }
+    }, [chatKey, initialMicrosoft365Enabled]);
+    const privateMode = microsoft365Protected || microsoft365Enabled;
+    useEffect(() => {
+        if (!privateMode) return;
+        const clearHiddenDraft = () => { if (document.hidden) setValue(""); };
+        document.addEventListener("visibilitychange", clearHiddenDraft);
+        return () => document.removeEventListener("visibilitychange", clearHiddenDraft);
+    }, [privateMode]);
+    const toggleMicrosoft365 = () => {
+        microsoft365SelectionRef.current.touched = true;
+        setMicrosoft365Enabled((current) => !current);
     };
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const controlsRef = useRef<HTMLDivElement>(null);
@@ -517,6 +548,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             model,
             reasoning: reasoningLevel,
             useEdgar: edgarEnabled,
+            useMicrosoft365: !projectId && !hideMicrosoft365Toggle && microsoft365Enabled,
         });
     };
 
@@ -801,6 +833,23 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                     >
                                         EDGAR
                                     </span>
+                                </button>
+                            )}
+                            {!hideMicrosoft365Toggle && !projectId && canSend && (
+                                <button
+                                    type="button"
+                                    onClick={toggleMicrosoft365}
+                                    disabled={isLoading}
+                                    aria-pressed={microsoft365Enabled}
+                                    aria-label="Use Microsoft 365 mail and files"
+                                    title={microsoft365Enabled ? "Microsoft 365 access is on" : "Allow Mike to read your Microsoft 365 mail and files"}
+                                    className={cn(
+                                        "flex items-center gap-1.5 rounded-lg px-2 h-8 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 disabled:opacity-50",
+                                        microsoft365Enabled ? "text-blue-600 hover:text-blue-700" : "text-gray-400 hover:text-gray-700",
+                                    )}
+                                >
+                                    <Mail aria-hidden="true" className="h-3.5 w-3.5" />
+                                    <span className={compactControls ? "hidden" : "hidden sm:inline"}>Microsoft 365</span>
                                 </button>
                             )}
                         </div>

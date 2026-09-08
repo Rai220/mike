@@ -57,6 +57,13 @@ import {
     titleModelForChat,
 } from "../lib/modelSelection";
 
+import {
+    microsoft365AssistantError,
+    readMicrosoft365OrdinaryChat,
+    streamMicrosoft365OrdinaryChat,
+    updateMicrosoft365OrdinaryChat,
+} from "./microsoft365Assistant";
+
 export const chatRouter = Router();
 
 type Db = ReturnType<typeof createServerSupabase>;
@@ -159,7 +166,16 @@ chatRouter.get("/", requireAuth, async (req, res) => {
         p_offset: offset,
     });
     if (error) return void sendInternalError(res, error);
-    res.json(data ?? []);
+    const rows = data ?? [];
+    if (Array.isArray(rows) && rows.length) {
+        const { data: protectedRows, error: protectedError } = await db.from("chats")
+            .select("id").eq("user_id", userId).eq("microsoft365_protected", true)
+            .in("id", rows.map((row: { id: string }) => row.id));
+        if (protectedError) return void sendInternalError(res, protectedError);
+        const protectedIds = new Set((Array.isArray(protectedRows) ? protectedRows : []).map((row: { id: string }) => row.id));
+        return void res.json(rows.map((row: { id: string }) => protectedIds.has(row.id) ? { ...row, microsoft365_protected: true } : row));
+    }
+    res.json(rows);
 });
 
 // POST /chat/create
@@ -215,6 +231,19 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
     if (!access.ok)
         return void res.status(404).json({ detail: "Chat not found" });
     const chat = access.chat;
+    if (chat.microsoft365_protected === true) {
+        try {
+            const protectedChat = await readMicrosoft365OrdinaryChat(req, res, chat, db);
+            if (!protectedChat) return;
+            res.json({
+                chat: { ...chat, microsoft365_expires_at: protectedChat.expiresAt, model: protectedChat.model, reasoning_level: protectedChat.reasoning },
+                is_owner: true,
+                access_role: access.projectRole,
+                messages: protectedChat.messages,
+            });
+        } catch (error) { microsoft365AssistantError(res, error); }
+        return;
+    }
 
     const { data: messages } = await db
         .from("chat_messages")
@@ -298,6 +327,9 @@ chatRouter.post("/:chatId/access", requireAuth, async (req, res) => {
     const access = await getAccessibleChat(chatId, userId, userEmail, db);
     if (!access.ok)
         return void res.status(404).json({ detail: "Chat not found" });
+    if (access.chat.microsoft365_protected === true) {
+        return void res.status(409).json({ code: "microsoft365_protected_chat", detail: "Microsoft 365 conversations stay private and keep their protected title." });
+    }
     if (!can(access.projectRole, "access.manage"))
         return void res.status(403).json({
             detail: "Only a chat owner can change who has access.",
@@ -530,6 +562,22 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
     const access = await getAccessibleChat(chatId, userId, userEmail, db);
     if (!access.ok)
         return void res.status(404).json({ detail: "Chat not found" });
+    if (access.chat.microsoft365_protected === true) {
+        if (updates.title != null || "project_id" in body || "projectId" in body) {
+            return void res.status(409).json({ code: "microsoft365_protected_chat", detail: "Microsoft 365 conversations stay private and keep their protected title." });
+        }
+        if (!can(access.projectRole, "content.edit")) {
+            return void res.status(403).json({ detail: "You do not have permission to modify this chat" });
+        }
+        try {
+            const updated = await updateMicrosoft365OrdinaryChat(req, res, access.chat, db, {
+                model: parsedModel.ok ? parsedModel.value : undefined,
+                reasoning: parsedReasoning.ok ? parsedReasoning.value : undefined,
+            });
+            if (updated) res.json(updated);
+        } catch (error) { microsoft365AssistantError(res, error); }
+        return;
+    }
     // Title edits are content collaboration (the same tier that already
     // rewrites titles via generate-title).
     if (updates.title != null && !can(access.projectRole, "content.edit"))
@@ -641,6 +689,9 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
         return void res.status(404).json({ detail: "Chat not found" });
     // Generating a title UPDATEs the chat row — a write, so being able to
     // *see* the chat is not enough. Org viewers get 403 here.
+    if (access.chat.microsoft365_protected === true) {
+        return void res.status(409).json({ code: "microsoft365_protected_chat", detail: "Microsoft 365 conversations stay private and keep their protected title." });
+    }
     if (!can(access.projectRole, "content.edit"))
         return void res
             .status(403)
@@ -684,6 +735,9 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         req.body && typeof req.body === "object" && !Array.isArray(req.body)
             ? (req.body as Record<string, unknown>)
             : {};
+    if (body.use_microsoft365 !== undefined && typeof body.use_microsoft365 !== "boolean") {
+        return void res.status(400).json({ detail: "use_microsoft365 must be a boolean" });
+    }
     const parsedMessages = parseChatMessages(body.messages);
     if (!parsedMessages.ok) {
         return void res.status(400).json({ detail: parsedMessages.detail });
@@ -746,6 +800,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     // note in routes/projectChat.ts — this is the same partition on the
     // route that serves standalone and project chats alike.
     let allowDocumentMutation = true;
+    let microsoft365Protected = false;
 
     if (chatId) {
         const access = await getAccessibleChat(chatId, userId, userEmail, db);
@@ -759,6 +814,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 detail: "You do not have permission to modify this chat",
             });
         const existing = access.chat;
+        microsoft365Protected = existing.microsoft365_protected === true;
 
         const existingProjectId = existing.project_id ?? null;
         if (
@@ -786,6 +842,16 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 projectAccess.ok &&
                 can(projectAccess.projectRole, "content.edit");
         }
+    }
+
+    if (body.use_microsoft365 === true || microsoft365Protected) {
+        await streamMicrosoft365OrdinaryChat(req, res, {
+            db, chatId, alreadyProtected: microsoft365Protected,
+            enabled: body.use_microsoft365 === true, projectId: resolvedProjectId,
+            message: [...messages].reverse().find((message) => message.role === "user"),
+            askInputsResponse, model, reasoning: parsedReasoning.value, useEdgar, chatModel, chatReasoningLevel,
+        });
+        return;
     }
 
     const modelSettings = await getUserModelSettings(userId, db);

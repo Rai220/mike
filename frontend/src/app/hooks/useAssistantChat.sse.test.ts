@@ -263,3 +263,55 @@ describe("useAssistantChat SSE parsing", () => {
         expect(result.current.messages).toEqual([]);
     });
 });
+
+describe("Microsoft 365 in the ordinary chat stream", () => {
+    it("sends a per-turn opt-in and consumes protected metadata without redirect content", async () => {
+        fetchMock.mockResolvedValue(sseResponse([
+            'data: {"type":"microsoft365","protected":true,"enabled":true,"expiresAt":"2099-09-14T12:00:00Z","model":"claude-sonnet-4-6","reasoning":"low"}\n\n',
+            'data: {"type":"content_delta","text":"Your inbox has messages."}\n\n',
+            'data: [DONE]\n\n',
+        ]));
+        const { result } = renderHook(() => useAssistantChat({ chatId: "existing-chat" }));
+        await act(async () => { await result.current.handleChat({ ...userMessage("What is in my inbox?"), useMicrosoft365: true }); });
+        expect(JSON.parse(fetchMock.mock.calls[0][1].body).use_microsoft365).toBe(true);
+        expect(result.current.microsoft365).toMatchObject({ protected: true, model: "claude-sonnet-4-6", reasoning: "low" });
+        expect(result.current.messages.at(-1)?.events).toEqual([expect.objectContaining({ type: "content", text: "Your inbox has messages." })]);
+        fetchMock.mockResolvedValue(sseResponse(['data: [DONE]\n\n']));
+        await act(async () => { await result.current.handleChat({ ...userMessage("Discuss this"), useMicrosoft365: false }); });
+        expect(JSON.parse(fetchMock.mock.calls.at(-1)![1].body).use_microsoft365).toBe(false);
+        expect(result.current.microsoft365?.protected).toBe(true);
+        const offRequest = JSON.parse(fetchMock.mock.calls.at(-1)![1].body);
+        expect(offRequest.messages).toEqual([{ role: "user", content: "Discuss this" }]);
+        expect(JSON.stringify(offRequest)).not.toContain("Your inbox has messages.");
+    });
+
+    it("clears protected history when hidden and restores only after fresh server authorization", async () => {
+        const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+        const { result } = renderHook(() => useAssistantChat({ chatId: "protected-chat" }));
+        await act(async () => {
+            result.current.setMessages([{ role: "assistant", content: "private body" }]);
+            result.current.setMicrosoft365({ protected: true, expiresAt: "2099-09-14T12:00:00Z" });
+        });
+        hidden.mockReturnValue(true);
+        act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+        expect(result.current.messages).toEqual([]);
+        expect(result.current.microsoft365Suspended).toBe(true);
+        fetchMock.mockResolvedValue(new Response(JSON.stringify({ chat: { id: "protected-chat", microsoft365_protected: true }, messages: [{ id: "m1", role: "assistant", content: [{ type: "content", text: "fresh authorized body" }] }], is_owner: true, access_role: "owner" }), { status: 200, headers: { "Content-Type": "application/json" } }));
+        hidden.mockReturnValue(false);
+        await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+        expect(result.current.messages[0]?.content).toBe("fresh authorized body");
+        expect(result.current.microsoft365Suspended).toBe(false);
+        hidden.mockRestore();
+    });
+    it("expires protected messages instead of keeping a visible stale transcript", async () => {
+        const { result } = renderHook(() => useAssistantChat({ chatId: "expired-chat" }));
+        await act(async () => {
+            result.current.setMessages([{ role: "assistant", content: "expired private body" }]);
+            result.current.setMicrosoft365({ protected: true, expiresAt: "2000-01-01T00:00:00Z" });
+        });
+        expect(result.current.messages).toEqual([]);
+        expect(result.current.microsoft365Suspended).toBe(true);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+});

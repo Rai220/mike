@@ -42,5 +42,20 @@ or architecture guidance.
 - [Legal workflows design spec](superpowers/specs/2026-06-29-legal-workflows-design.md)
 - [Word add-in assistant scroll-jump report](word-addin-chat-scroll-report.md)
 
+## Microsoft 365 integration
+
+- [Microsoft 365 integration plan](microsoft-365-integration-plan.md) — architecture
+  original architecture and implementation decisions for Outlook, OneDrive, and SharePoint
+- [Microsoft 365 connection check](microsoft365-connection-check.md) — local
+  credential and delegated mail diagnostics; live canary evidence
+- [Microsoft 365 connection setup](microsoft365-setup.md) — operator configuration
+  and user flow for the protected mail/file web chat
+
+- [Microsoft 365 protected web chat PRD](microsoft365-protected-chat-prd.md) — implemented scope, privacy boundaries, acceptance gaps.
+
+- [Microsoft 365 verification](microsoft365-verification.md) — test evidence and live acceptance limits.
+
 Contribution and disclosure policies live in [CONTRIBUTING.md](../CONTRIBUTING.md)
 and [SECURITY.md](../SECURITY.md).
+
+- [Microsoft 365 RnD deployment](microsoft365-rnd-deployment.md) — rollout, verification and activation status.

@@ -25,6 +25,7 @@ const { runLLMStream, dbInserts, dbUpdates, dbControl } = vi.hoisted(() => ({
         terminalUpdateAttempts: 0,
         terminalUpdateGate: null as Promise<void> | null,
         wordChatMissing: false,
+        microsoft365Protected: false,
         // When set, selects on chat_messages resolve against these rows with
         // the eq/not/order/limit chain genuinely applied (a mini query
         // engine), so tests can prove which assistant row a query picks.
@@ -44,6 +45,7 @@ function makeQuery(table: string) {
             title: null,
             user_id: "u1",
             project_id: null,
+            microsoft365_protected: dbControl.microsoft365Protected,
         },
         error: null,
     };
@@ -2059,5 +2061,74 @@ describe("chat grants, deletion and roster", () => {
             );
             expect(chatWrites("delete")).toEqual([]);
         });
+    });
+});
+
+
+describe("ordinary chat Microsoft 365 routing boundary", () => {
+    beforeEach(() => { vi.clearAllMocks(); dbInserts.length = 0; dbUpdates.length = 0; dbControl.microsoft365Protected = false; });
+    afterEach(() => { dbControl.microsoft365Protected = false; vi.restoreAllMocks(); });
+    it.each([true, false])("routes a protected shell through the encrypted handler even with use_microsoft365=%s", async (enabled) => {
+        dbControl.microsoft365Protected = true;
+        const module = await import("../../routes/microsoft365Assistant");
+        const protectedRun = vi.spyOn(module, "streamMicrosoft365OrdinaryChat").mockImplementation(async (_req, res) => { res.status(200).json({ protected: true }); });
+        const res = await request(app).post("/chat").set("Authorization", "Bearer test").send({ ...VALID_BODY, chat_id: "chat-1", use_microsoft365: enabled });
+        expect(res.status).toBe(200);
+        expect(protectedRun).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ alreadyProtected: true, enabled, chatId: "chat-1" }));
+        expect(runLLMStream).not.toHaveBeenCalled();
+        expect(dbInserts).toEqual([]);
+        expect(dbUpdates).toEqual([]);
+    });
+    it.each([true, false])("passes composer tools and selected settings into the protected runner with access=%s", async (enabled) => {
+        dbControl.microsoft365Protected = true;
+        const module = await import("../../routes/microsoft365Assistant");
+        const protectedRun = vi.spyOn(module, "streamMicrosoft365OrdinaryChat").mockImplementation(async (_req, res) => { res.status(200).json({ protected: true }); });
+        const files = [{ filename: "agreement.pdf", document_id: "11111111-1111-4111-8111-111111111111" }];
+        const workflow = { id: "22222222-2222-4222-8222-222222222222", title: "Review agreement" };
+        const res = await request(app).post("/chat").set("Authorization", "Bearer test").send({
+            ...VALID_BODY, chat_id: "chat-1", use_microsoft365: enabled, use_edgar: false,
+            reasoning: "low", messages: [{ role: "user", content: "Review this", files, workflow }],
+        });
+        expect(res.status).toBe(200);
+        expect(protectedRun).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({
+            enabled, useEdgar: false, model: VALID_BODY.model, reasoning: "low",
+            message: { role: "user", content: "Review this", files, workflow },
+        }));
+        expect(dbInserts).toEqual([]);expect(dbUpdates).toEqual([]);expect(runLLMStream).not.toHaveBeenCalled();
+    });
+    it("updates protected model and reasoning through the encrypted handler", async () => {
+        dbControl.microsoft365Protected = true;
+        const module = await import("../../routes/microsoft365Assistant");
+        const protectedUpdate = vi.spyOn(module, "updateMicrosoft365OrdinaryChat").mockResolvedValue({ id: "chat-1", title: "Microsoft 365", model: "gemini-3.1-pro-preview", reasoning_level: "low" });
+        const res = await request(app).patch("/chat/chat-1").set("Authorization", "Bearer test").send({model: "gemini-3.1-pro-preview", reasoningLevel: "low"});
+        expect(res.status).toBe(200);expect(res.body.reasoning_level).toBe("low");
+        expect(protectedUpdate).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ id: "chat-1" }), expect.anything(), {model: "gemini-3.1-pro-preview", reasoning: "low"});
+        expect(dbInserts).toEqual([]);expect(dbUpdates).toEqual([]);
+    });
+    it.each([{title: "private title"}, {project_id: "project-1"}])("keeps protected title and project changes blocked alongside model edits: %j", async (extra) => {
+        dbControl.microsoft365Protected = true;
+        const module = await import("../../routes/microsoft365Assistant");
+        const protectedUpdate = vi.spyOn(module, "updateMicrosoft365OrdinaryChat");
+        const res = await request(app).patch("/chat/chat-1").set("Authorization", "Bearer test").send({model: "gemini-3.1-pro-preview", ...extra});
+        expect(res.status).toBe(409);expect(protectedUpdate).not.toHaveBeenCalled();expect(dbUpdates).toEqual([]);
+    });
+    it("routes first opt-in before plaintext user/title/event persistence", async () => {
+        const module = await import("../../routes/microsoft365Assistant");
+        const protectedRun = vi.spyOn(module, "streamMicrosoft365OrdinaryChat").mockImplementation(async (_req, res) => { res.status(200).json({ protected: true }); });
+        const res = await request(app).post("/chat").set("Authorization", "Bearer test").send({ ...VALID_BODY, use_microsoft365: true });
+        expect(res.status).toBe(200);expect(protectedRun).toHaveBeenCalled();expect(runLLMStream).not.toHaveBeenCalled();expect(dbInserts).toEqual([]);
+    });
+    it("rejects malformed toggle values instead of treating truthy input as consent", async () => {
+        const res = await request(app).post("/chat").set("Authorization", "Bearer test").send({ ...VALID_BODY, use_microsoft365: "true" });
+        expect(res.status).toBe(400);expect(runLLMStream).not.toHaveBeenCalled();expect(dbInserts).toEqual([]);
+    });
+    it("rejects malformed JSON without echoing corporate body fragments", async () => {
+        const res = await request(app).post("/chat").set("Authorization", "Bearer test").set("Content-Type", "application/json").send('{"use_microsoft365":true,"messages":PRIVATE_CORPORATE_FRAGMENT');
+        expect(res.status).toBe(400);expect(res.text).not.toContain("PRIVATE_CORPORATE_FRAGMENT");expect(runLLMStream).not.toHaveBeenCalled();
+    });
+    it.each(["access", "generate-title"])("blocks %s on a protected shell before plaintext or model mutations", async (suffix) => {
+        dbControl.microsoft365Protected = true;
+        const res = await request(app).post(`/chat/chat-1/${suffix}`).set("Authorization", "Bearer test").send({ message: "private title", email: "other@example.com", role: "viewer" });
+        expect(res.status).toBe(409);expect(dbInserts).toEqual([]);expect(dbUpdates).toEqual([]);
     });
 });

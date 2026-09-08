@@ -22,6 +22,8 @@ import { sourceDocumentsRouter } from "./routes/sourceDocuments";
 import { auditRouter } from "./routes/audit";
 import { authRouter } from "./routes/auth";
 import { uploadSessionsRouter } from "./routes/uploadSessions";
+import { microsoft365JsonBody } from "./middleware/microsoft365Body";
+import { microsoft365Router } from "./routes/microsoft365";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import {
   handleUnhandledError,
@@ -220,6 +222,8 @@ app.use(generalLimiter);
 app.post("/auth/login", authLoginIpLimiter);
 app.post(["/auth/signup", "/auth/password-reset"], authEmailLimiter);
 app.post(["/auth/oauth", "/auth/exchange", "/auth/handoff"], authFlowLimiter);
+app.post("/integrations/microsoft365/connect", authFlowLimiter);
+app.post("/integrations/microsoft365/:connectionId/check", authFlowLimiter);
 app.post(
   ["/auth/mfa/verify", "/auth/mfa/challenge-and-verify"],
   authMfaLimiter,
@@ -275,6 +279,17 @@ app.delete("/user/chats", dataDeleteLimiter);
 app.delete("/user/projects", dataDeleteLimiter);
 app.delete("/user/tabular-reviews", dataDeleteLimiter);
 
+app.use("/integrations/microsoft365", microsoft365JsonBody);
+// Ordinary chat requests can now contain protected corporate history. Never
+// forward JSON parse errors (which carry raw body fragments) to default logging.
+const chatJsonBody = express.json({ limit: JSON_BODY_LIMIT });
+app.post("/chat", (req, res, next) => {
+  chatJsonBody(req, res, (error?: { type?: string }) => {
+    if (!error) return next();
+    res.status(error.type === "entity.too.large" ? 413 : 400)
+      .json({ code: "invalid_query", detail: "The chat request is not valid JSON or is too large." });
+  });
+});
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 // Body-aware account throttling complements the per-IP login limiter. The key
@@ -300,6 +315,7 @@ app.use("/download", downloadsRouter);
 app.use("/documents", sourceDocumentsRouter);
 app.use("/audit", auditRouter);
 app.use("/upload-sessions", uploadSessionsRouter);
+app.use("/integrations/microsoft365", microsoft365Router);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 

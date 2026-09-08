@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ArrowDown, Pencil, Plus, Trash2, Users } from "lucide-react";
 import { UserMessage } from "./UserMessage";
 import { AssistantMessage } from "./AssistantMessage";
+import { Microsoft365Message } from "./Microsoft365Message";
 import { ChatInput } from "./ChatInput";
 import type { ChatInputHandle } from "./ChatInput";
 import { AskInputPopup } from "./AskInputPopup";
@@ -47,6 +48,8 @@ import { userFacingApiError } from "@/app/lib/userFacingError";
 interface Props {
     chatId?: string | null;
     chat?: Chat | null;
+    microsoft365Protected?: boolean;
+    microsoft365ExpiresAt?: string | null;
     chatModel?: string | null;
     chatReasoningLevel?: NonNullable<Message["reasoning"]> | null;
     messages: Message[];
@@ -89,6 +92,8 @@ function isSmallScreen() {
 export function ChatView({
     chatId,
     chat,
+    microsoft365Protected = false,
+    microsoft365ExpiresAt,
     chatModel,
     chatReasoningLevel,
     messages,
@@ -141,6 +146,7 @@ export function ChatView({
         chat ??
         null;
     const activeChatRole = activeChat ? roleFrom(activeChat) : null;
+    const privateChat = microsoft365Protected || !!chat?.microsoft365_protected || !!activeChat?.microsoft365_protected;
     const panelCloseTimerRef = useRef<number | null>(null);
     const activeTab = tabs.find((tab) => tab.id === activeTabId);
     const activeCitation =
@@ -656,7 +662,7 @@ export function ChatView({
     };
 
     const handleShareChat = () => {
-        if (!activeChat) return;
+        if (!activeChat || privateChat) return;
         if (!can(activeChatRole, "access.manage")) {
             setActionGate({
                 action: "share this chat",
@@ -668,7 +674,7 @@ export function ChatView({
     };
 
     const handleRenameChat = async () => {
-        if (!activeChat) return;
+        if (!activeChat || privateChat) return;
         if (!can(activeChatRole, "content.edit")) {
             setActionGate({
                 action: "rename this chat",
@@ -734,13 +740,13 @@ export function ChatView({
                         label: "Share",
                         icon: Users,
                         onSelect: handleShareChat,
-                        disabled: !activeChat,
+                        disabled: !activeChat || privateChat,
                     },
                     {
                         label: "Rename",
                         icon: Pencil,
                         onSelect: () => void handleRenameChat(),
-                        disabled: !activeChat,
+                        disabled: !activeChat || privateChat,
                     },
                     {
                         label: "Delete",
@@ -882,6 +888,8 @@ export function ChatView({
                                                     });
                                                 }}
                                             />
+                                        ) : privateChat ? (
+                                            <Microsoft365Message message={msg} isLoading={isResponseLoading && i === messages.length - 1} />
                                         ) : (
                                             <AssistantMessage
                                                 events={msg.events}
@@ -1017,8 +1025,17 @@ export function ChatView({
                                     }}
                                 />
                             ) : (
+                                <div>
+                                {privateChat && <p role="status" className="px-3 py-1 text-xs text-muted-foreground">
+                                    Private Microsoft 365 conversation · {chatModel ?? "Organization model"}
+                                    {microsoft365ExpiresAt ? ` · Until ${new Date(microsoft365ExpiresAt).toLocaleDateString()}` : ""}
+                                    . Turn access off to stop new mail and file reads.
+                                </p>}
                                 <ChatInput
                                     ref={chatInputRef}
+                                    microsoft365Protected={privateChat}
+                                    initialMicrosoft365Enabled={messages.findLast((message) => message.role === "user")?.useMicrosoft365 === true}
+                                    hideMicrosoft365Toggle={!!activeChat?.project_id || (!!activeChat && !activeChat.is_owner)}
                                     canSend={canSend}
                                     onSubmit={handleChat}
                                     onCancel={cancel}
@@ -1039,6 +1056,7 @@ export function ChatView({
                                         })
                                     }
                                 />
+                                </div>
                             )}
                         </div>
                     </div>
@@ -1052,7 +1070,7 @@ export function ChatView({
                 initialWorkflowId={workflowModalInitialId}
             />
 
-            {shareOpen && activeChat ? (
+            {shareOpen && activeChat && !privateChat ? (
                 <ChatAccessModal
                     open={shareOpen}
                     chat={activeChat}

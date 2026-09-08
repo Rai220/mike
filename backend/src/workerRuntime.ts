@@ -44,6 +44,7 @@ const MCP_REFRESH_MAX_EXPIRED_AGE_MS = 24 * 60 * 60 * 1000;
 
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 let initialSweep: ReturnType<typeof setTimeout> | null = null;
+let microsoft365Timer: ReturnType<typeof setInterval> | null = null;
 let mcpRefreshTimer: ReturnType<typeof setInterval> | null = null;
 let stopUploadWorker: (() => void) | null = null;
 
@@ -119,6 +120,18 @@ export function startAllWorkers(): void {
     sweepTimer = setInterval(runSweep, SWEEP_INTERVAL_MS);
     sweepTimer.unref();
 
+    // Retention and key rotation continue when chat/connection UI is disabled.
+    // Keep ORG_ID configured until all corporate data has been erased.
+    if (process.env.MICROSOFT365_ORG_ID) {
+        const maintain = () => void enqueueDbJob(createServerSupabase(), {
+            kind: "microsoft365.maintenance", payload: {},
+            dedupeKey: "microsoft365.maintenance", maxAttempts: 3,
+        }).catch(() => console.error("[microsoft365] maintenance scheduling failed"));
+        maintain();
+        microsoft365Timer = setInterval(maintain, 10 * 60_000);
+        microsoft365Timer.unref();
+    }
+
     // MCP OAuth tokens: renew the ones about to expire on this schedule
     // rather than inside whichever request first trips over the expiry. The
     // lazy refresh in lib/mcp/oauth.ts stays as the last line of defense.
@@ -135,6 +148,8 @@ export async function stopAllWorkers(): Promise<void> {
     if (initialSweep) clearTimeout(initialSweep);
     if (sweepTimer) clearInterval(sweepTimer);
     if (mcpRefreshTimer) clearInterval(mcpRefreshTimer);
+    if (microsoft365Timer) clearInterval(microsoft365Timer);
+    microsoft365Timer = null;
     initialSweep = null;
     sweepTimer = null;
     mcpRefreshTimer = null;

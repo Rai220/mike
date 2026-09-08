@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { streamChat, streamProjectChat } from "@/app/lib/mikeApi";
+import { getChat, streamChat, streamProjectChat } from "@/app/lib/mikeApi";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { isPanelDocument } from "@/app/components/shared/types";
 import type {
@@ -89,10 +89,76 @@ export function useAssistantChat({
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const eventsRef = useRef<AssistantEvent[]>([]);
+  const [microsoft365, setMicrosoft365] = useState<{
+    protected: boolean;
+    expiresAt: string | null;
+    model?: string;
+    reasoning?: Message["reasoning"];
+  } | null>(null);
+  const [microsoft365Suspended, setMicrosoft365Suspended] = useState(false);
+  const clearNewChatMessagesRef = useRef(setNewChatMessages);
+  clearNewChatMessagesRef.current = setNewChatMessages;
+  const protectedRef = useRef(false);
+  const suspendedRef = useRef(false);
+  protectedRef.current = !!microsoft365?.protected;
+
+  useEffect(() => () => {
+    if (!protectedRef.current) return;
+    abortControllerRef.current?.abort();
+    eventsRef.current = [];
+    clearNewChatMessagesRef.current(null);
+  }, []);
+
+  useEffect(() => {
+    if (!microsoft365?.protected) return;
+    let disposed = false;
+    let refreshGeneration = 0;
+    const clearProtectedHistory = () => {
+      suspendedRef.current = true;
+      setMicrosoft365Suspended(true);
+      refreshGeneration++;
+      abortControllerRef.current?.abort();
+      eventsRef.current = [];
+      setMessages([]);
+      clearNewChatMessagesRef.current(null);
+      setIsResponseLoading(false);
+      setIsLoadingCitations(false);
+    };
+    const expired = () => !!microsoft365.expiresAt && Date.parse(microsoft365.expiresAt) <= Date.now();
+    const refresh = async () => {
+      if (document.hidden || expired()) { clearProtectedHistory(); return; }
+      if (!chatId) return;
+      const generation = ++refreshGeneration;
+      try {
+        const loaded = await getChat(chatId);
+        if (disposed || generation !== refreshGeneration || document.hidden || expired()) return;
+        if (!loaded.chat.microsoft365_protected) { clearProtectedHistory(); return; }
+        suspendedRef.current = false;
+        setMicrosoft365Suspended(false);
+        setMessages(loaded.messages);
+      } catch { if (!disposed) clearProtectedHistory(); }
+    };
+    const onVisibility = () => {
+      if (document.hidden) clearProtectedHistory();
+      else void refresh();
+    };
+    if (document.hidden || expired()) clearProtectedHistory();
+    document.addEventListener("visibilitychange", onVisibility);
+    const timer = microsoft365.expiresAt
+      ? window.setTimeout(clearProtectedHistory, Math.max(0, Math.min(2147483647, Date.parse(microsoft365.expiresAt) - Date.now())))
+      : undefined;
+    return () => {
+      disposed = true;
+      document.removeEventListener("visibilitychange", onVisibility);
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [chatId, microsoft365?.protected, microsoft365?.expiresAt]);
+
 
   const updateLatestAssistantMessage = (
     updater: (message: Message) => Message,
   ) => {
+    if (protectedRef.current && suspendedRef.current) return;
     setMessages((prev) => {
       const assistantIndex = [...prev]
         .map((message, index) => ({ message, index }))
@@ -352,6 +418,10 @@ export function useAssistantChat({
       }));
 
       const useEdgar = message.useEdgar;
+      if (message.useMicrosoft365 && !projectId) {
+        protectedRef.current = true;
+        setMicrosoft365((current) => current ?? { protected: true, expiresAt: null });
+      }
       const response = await (projectId
         ? streamProjectChat({
             projectId,
@@ -372,7 +442,12 @@ export function useAssistantChat({
             signal: controller.signal,
           })
         : streamChat({
-            messages: apiMessages,
+            use_microsoft365: message.useMicrosoft365 === true,
+            // The server owns protected history; do not retransmit private
+            // responses or let a browser-supplied transcript become authority.
+            messages: message.useMicrosoft365 === true || protectedRef.current
+              ? apiMessages.filter((item) => item.role === "user").slice(-1)
+              : apiMessages,
             chat_id: chatId,
             model,
             reasoning,
@@ -394,6 +469,10 @@ export function useAssistantChat({
 
       while (true) {
         const { done, value } = await reader.read();
+        if (protectedRef.current && suspendedRef.current) {
+          await reader.cancel();
+          return null;
+        }
         if (done) {
           // Flush any bytes still held by TextDecoder. A response is allowed
           // to close without a final newline, so the remaining buffer must be
@@ -414,6 +493,17 @@ export function useAssistantChat({
 
           try {
             const data = JSON.parse(dataStr);
+
+            if (data.type === "microsoft365" && data.protected === true) {
+              protectedRef.current = true;
+              setMicrosoft365({
+                protected: true,
+                expiresAt: typeof data.expiresAt === "string" ? data.expiresAt : null,
+                model: typeof data.model === "string" ? data.model : undefined,
+                reasoning: ["none", "low", "medium", "high", "xhigh", "max"].includes(data.reasoning) ? data.reasoning : undefined,
+              });
+              continue;
+            }
 
             if (data.type === "chat_id") {
               streamedChatId = data.chatId;
@@ -1320,6 +1410,7 @@ export function useAssistantChat({
 
       return streamedChatId || null;
     } catch (error: unknown) {
+      if (protectedRef.current && suspendedRef.current) return null;
       if (error instanceof Error && error.name === "AbortError") {
         finalizeStreamingContent();
         finalizeStreamingReasoning();
@@ -1409,6 +1500,9 @@ export function useAssistantChat({
 
   return {
     messages,
+    microsoft365,
+    microsoft365Suspended,
+    setMicrosoft365,
     isResponseLoading,
     setIsResponseLoading,
     isLoadingCitations,

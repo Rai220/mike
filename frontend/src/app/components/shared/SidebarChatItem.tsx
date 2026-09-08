@@ -52,8 +52,8 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
     // this gate reflects what the server would actually answer; roleFrom
     // fails closed to viewer when a row carries neither field.
     const role = roleFrom(chat);
-    const canRename = can(role, "content.edit");
-    const canShare = can(role, "access.manage");
+    const canRename = !chat.microsoft365_protected && can(role, "content.edit");
+    const canShare = !chat.microsoft365_protected && can(role, "access.manage");
     const canDelete = can(role, "container.delete");
 
     useEffect(() => {
@@ -163,6 +163,7 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
                         </DropdownMenuTrigger>
                         <LiquidDropdownContent align="end" className="z-101">
                             <LiquidDropdownItem
+                                disabled={chat.microsoft365_protected}
                                 onSelect={() => {
                                     if (!canShare) {
                                         setGate({
@@ -178,6 +179,7 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
                                 Share
                             </LiquidDropdownItem>
                             <LiquidDropdownItem
+                                disabled={chat.microsoft365_protected}
                                 onSelect={() => {
                                     if (!canRename) {
                                         setGate({

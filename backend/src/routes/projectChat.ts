@@ -62,6 +62,12 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         req.body && typeof req.body === "object" && !Array.isArray(req.body)
             ? (req.body as Record<string, unknown>)
             : {};
+    if (body.use_microsoft365 !== undefined && typeof body.use_microsoft365 !== "boolean") {
+        return void res.status(400).json({ detail: "use_microsoft365 must be a boolean" });
+    }
+    if (body.use_microsoft365 === true) {
+        return void res.status(409).json({ code: "microsoft365_private_chat_required", detail: "Microsoft 365 access is available in personal chats only." });
+    }
     const parsedMessages = parseChatMessages(body.messages);
     if (!parsedMessages.ok) {
         return void res.status(400).json({ detail: parsedMessages.detail });
@@ -158,10 +164,13 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         const { data: existing } = await db
             .from("chats")
             .select(
-                "id, title, model, reasoning_level, project_id, user_id, org_id",
+                "id, title, model, reasoning_level, project_id, user_id, org_id, microsoft365_protected",
             )
             .eq("id", chatId)
             .maybeSingle();
+        if (existing?.microsoft365_protected === true) {
+            return void res.status(409).json({ code: "microsoft365_private_chat_required", detail: "Microsoft 365 conversations cannot be used in project chats." });
+        }
         const canUse = !!existing && existing.project_id === projectId;
         if (!canUse) chatId = null;
         else {
