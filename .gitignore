@@ -33,3 +33,8 @@ backend/supabase/*
 .current-issue.md
 .implementation-plan.md
 .implement-config
+
+# Deployment-local files. They pin one install to its tenant, ports and
+# credentials, so they never belong in a shared repository.
+docker-compose.override.yml
+.microsoft365-deployment.json
