@@ -353,20 +353,6 @@ export default function SettingsPage() {
                 </SettingsSection>
             </section>
 
-            {/* Plan */}
-            <section className="space-y-3">
-                <h2 className="text-2xl font-medium font-serif text-gray-900">
-                    Usage Plan
-                </h2>
-                <SettingsSection>
-                    <div className="p-4">
-                        <p className="text-base font-medium text-gray-500 capitalize">
-                            {profile?.tier || "Free"}
-                        </p>
-                    </div>
-                </SettingsSection>
-            </section>
-
             {/* Danger Zone */}
             <section className="space-y-3">
                 <h2 className="text-2xl font-medium font-serif text-red-600">

@@ -238,11 +238,6 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
         return profile.displayName || user?.email?.split("@")[0] || "";
     };
 
-    const getUserTier = () => {
-        if (!profile) return "";
-        return profile.tier || "Free";
-    };
-
     if (!user) return null;
 
     return (
@@ -594,9 +589,6 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                         <div className="flex flex-col gap-0.5 min-w-0">
                                             <div className="text-sm font-medium text-gray-900 leading-none">
                                                 {getDisplayName()}
-                                            </div>
-                                            <div className="text-[12px] text-gray-500 leading-none">
-                                                {getUserTier()}
                                             </div>
                                         </div>
                                         <ChevronsUpDown className="h-4 w-4 flex-shrink-0 text-gray-400" />
